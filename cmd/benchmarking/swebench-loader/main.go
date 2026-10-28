@@ -46,6 +46,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agent-substrate/env/internal/benchmarking/schema"
 	"github.com/agent-substrate/env/internal/benchmarking/swebench"
 )
 
@@ -58,6 +59,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCmd(os.Args[2:])
+	case "resolve":
+		err = resolveCmd(os.Args[2:])
 	case "report":
 		err = reportCmd(os.Args[2:], os.Stdout)
 	case "trajectory-assets":
@@ -219,7 +222,7 @@ func idsDigest(ids []string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: swebench-loader run [flags] | swebench-loader report FILE... [-json OUT] | swebench-loader trajectory-assets FILE")
+	fmt.Fprintln(os.Stderr, "usage: swebench-loader run [flags] | swebench-loader resolve [flags] | swebench-loader report FILE... [-json OUT] | swebench-loader trajectory-assets FILE")
 }
 
 // assetsCmd prints the files a trajectory's write steps name, one per line,
@@ -236,6 +239,52 @@ func assetsCmd(args []string, w io.Writer) error {
 		fmt.Fprintln(w, n)
 	}
 	return nil
+}
+
+func resolveCmd(args []string) error {
+	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
+	var (
+		dataset      = fs.String("dataset", "", "JSONL manifest of instances; a path or an https URL. Required.")
+		images       = fs.Int("images", 0, "Use the first N instances of the dataset; 0 means all.")
+		instances    = fs.String("instances", "", "Comma-separated instance ids to use instead of the first N.")
+		excludeFile  = fs.String("exclude-file", "", "File of instance ids to leave out, one per line.")
+		steps        = fs.Int("steps", 8, "Number of training steps.")
+		tasksPerStep = fs.Int("tasks-per-step", 0, "Tasks sampled per step; 0 means all selected instances.")
+		groupSize    = fs.Int("group-size", 2, "Group size (rollouts) per sampled instance.")
+		park         = fs.String("park", string(schema.ParkSuspendAsync), "Park policy: suspend-async, suspend-sync, suspend, fork, delete, or none.")
+		seed         = fs.Uint64("seed", 42, "Deterministic RNG seed for step sampling.")
+		runID        = fs.String("run-id", "swe-sched", "Job / schedule ID.")
+		out          = fs.String("out", "schedule.json", "Output path for the resolved schedule JSON.")
+	)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dataset == "" {
+		return fmt.Errorf("-dataset is required")
+	}
+	all, err := swebench.LoadDataset(*dataset)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	if *instances != "" {
+		ids = strings.Split(*instances, ",")
+	}
+	var exclude []string
+	if *excludeFile != "" {
+		if exclude, err = swebench.ReadIDList(*excludeFile); err != nil {
+			return err
+		}
+	}
+	selected, err := swebench.Select(all, ids, exclude, *images)
+	if err != nil {
+		return err
+	}
+	sched, err := swebench.ResolveSingleJobSchedule(*runID, *seed, schema.ParkPolicy(*park), *steps, *tasksPerStep, *groupSize, selected)
+	if err != nil {
+		return err
+	}
+	return swebench.WriteSchedule(*out, sched)
 }
 
 func runCmd(args []string) (retErr error) {
@@ -256,9 +305,15 @@ func runCmd(args []string) (retErr error) {
 		tasksPerImage = fs.Int("tasks-per-image", 1, "eval: replays per image.")
 		rollouts      = fs.Int("rollouts", 2, "steps: environments per image.")
 		steps         = fs.Int("steps", 8, "steps: training steps.")
-		park          = fs.String("park", string(swebench.ParkSuspend), "steps: what happens between steps: suspend, delete or none.")
+		park          = fs.String("park", string(swebench.ParkSuspend), "steps: what happens between steps: suspend, suspend-sync, suspend-async, fork, delete or none.")
 		imagesPerStep = fs.Int("images-per-step", 0, "steps: each step takes the next N images (wrapping around the dataset) with fresh environments, retired after the step: the create-and-retire-pools-per-step shape; needs -park delete. 0 keeps one fleet across the steps.")
 		parkEach      = fs.Bool("park-each", false, "steps: park each environment as soon as its step ends instead of after the whole fleet's step, so at most -width are awake at once and the fleet can be larger than the running slots; the barrier then includes the parking.")
+		schedulePath  = fs.String("schedule", "", "steps: path to a pre-resolved schedule.json.")
+		resolveOut    = fs.String("resolve-out", "", "steps: write the resolved schedule.json to this path before running.")
+		tasksPerStep  = fs.Int("tasks-per-step", 0, "steps: tasks sampled per step when resolving a schedule (0 means all selected instances).")
+		groupSize     = fs.Int("group-size", 0, "steps: group size per sampled task when resolving a schedule (0 uses -rollouts).")
+		stepPause     = fs.Duration("step-pause", 0, "steps: simulated trainer pause between steps.")
+		prefetch      = fs.Bool("prefetch", false, "steps: asynchronously prewarm next step's prefetch_images off the critical path.")
 		createTimeout = fs.Duration("create-timeout", 5*time.Minute, "Deadline for one create call.")
 		stepTimeout   = fs.Duration("step-timeout", 10*time.Minute, "Default deadline for a run step without its own timeout.")
 		wakeBudget    = fs.Duration("wake-budget", 3*time.Minute, "How long a task's first command is retried while the environment is still waking or its image is still being baked.")
@@ -361,6 +416,28 @@ func runCmd(args []string) (retErr error) {
 	}
 	traj := trajs[0]
 
+	var sched *schema.Schedule
+	if *schedulePath != "" {
+		sched, err = swebench.ReadSchedule(*schedulePath)
+		if err != nil {
+			return err
+		}
+	} else if *resolveOut != "" {
+		gs := *groupSize
+		if gs <= 0 {
+			gs = *rollouts
+		}
+		sched, err = swebench.ResolveSingleJobSchedule(*runID, uint64(*seed), schema.ParkPolicy(*park), *steps, *tasksPerStep, gs, selected)
+		if err != nil {
+			return err
+		}
+	}
+	if *resolveOut != "" && sched != nil {
+		if err := swebench.WriteSchedule(*resolveOut, sched); err != nil {
+			return err
+		}
+	}
+
 	fanout := *tasksPerImage
 	if swebench.Mode(*mode) == swebench.ModeSteps {
 		fanout = *rollouts
@@ -425,6 +502,11 @@ func runCmd(args []string) (retErr error) {
 		Park:          swebench.Park(*park),
 		ImagesPerStep: *imagesPerStep,
 		ParkEach:      *parkEach,
+		Schedule:      sched,
+		TasksPerStep:  *tasksPerStep,
+		GroupSize:     *groupSize,
+		StepPause:     *stepPause,
+		Prefetch:      *prefetch,
 		CreateTimeout: *createTimeout,
 		StepTimeout:   *stepTimeout,
 		WakeBudget:    *wakeBudget,

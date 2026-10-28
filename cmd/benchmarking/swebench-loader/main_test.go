@@ -206,6 +206,45 @@ func TestEndToEndSWEBenchAndCommandDatasets(t *testing.T) {
 	if repCmd.Tasks != 4 || repCmd.Failed != 0 || repCmd.Rewarded != 4 || repCmd.RewardRate != 1.0 {
 		t.Fatalf("unexpected Command report: %+v", repCmd)
 	}
+
+	// 3. End-to-end resolve + scheduled WorkingSet run + report.
+	schedPath := filepath.Join(dir, "schedule.json")
+	if err := resolveCmd([]string{
+		"-dataset", cmdManifest,
+		"-steps", "3",
+		"-tasks-per-step", "1",
+		"-group-size", "2",
+		"-park", "suspend-async",
+		"-seed", "42",
+		"-run-id", "sched-e2e",
+		"-out", schedPath,
+	}); err != nil {
+		t.Fatalf("resolveCmd: %v", err)
+	}
+	schedEvents := filepath.Join(dir, "sched-events.jsonl")
+	if err := runCmd([]string{
+		"-dataset", cmdManifest,
+		"-mode", "steps",
+		"-schedule", schedPath,
+		"-park", "suspend-async",
+		"-step-pause", "5ms",
+		"-prefetch",
+		"-width", "2",
+		"-run-id", "sched-e2e",
+		"-out", schedEvents,
+	}); err != nil {
+		t.Fatalf("runCmd(schedule): %v", err)
+	}
+	repSched, err := summarizeFile(schedEvents)
+	if err != nil {
+		t.Fatalf("summarizeFile(schedEvents): %v", err)
+	}
+	if repSched.Tasks != 6 || repSched.Failed != 0 || repSched.Rewarded != 6 {
+		t.Fatalf("unexpected scheduled report: %+v", repSched)
+	}
+	if repSched.WorkingSetHitRate <= 0 || repSched.Created == 0 || repSched.Reused == 0 {
+		t.Fatalf("expected non-zero working-set hit rate and reuse in scheduled report: %+v", repSched)
+	}
 }
 
 func TestLabelFlags(t *testing.T) {

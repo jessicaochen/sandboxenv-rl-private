@@ -72,6 +72,18 @@ type Event struct {
 	// width, images, trajectory, the shape flags) and the operator's -label
 	// values, which win on a clash.
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// Working-set telemetry attached to step_barrier, park, and run events when
+	// a scheduled working-set pool is active.
+	WorkingSetHits       int     `json:"working_set_hits,omitempty"`
+	WorkingSetMisses     int     `json:"working_set_misses,omitempty"`
+	WorkingSetHitRate    float64 `json:"working_set_hit_rate,omitempty"`
+	StandingPoolSize     int     `json:"standing_pool_size,omitempty"`
+	Created              int     `json:"created,omitempty"`
+	Reused               int     `json:"reused,omitempty"`
+	Retired              int     `json:"retired,omitempty"`
+	PrefetchLeadMarginMS float64 `json:"prefetch_lead_margin_ms,omitempty"`
+	ReleaseOverlapMS     float64 `json:"release_overlap_ms,omitempty"`
 }
 
 const recorderBufferSize = 64 * 1024

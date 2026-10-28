@@ -1,0 +1,32 @@
+{
+  "schema_version": "v1",
+  "scenario_name": "swebench-multi-step",
+  "seed": 42,
+  "jobs": [
+    {
+      "job": "sim-loop-1",
+      "start_offset_ms": 500,
+      "steps": [
+        {
+          "step": 1,
+          "step_pause_ms": 1000,
+          "tasks": [
+            {
+              "instance_id": "astropy__astropy-12907",
+              "image": "gcr.io/test/astropy:latest",
+              "trajectory": "benchmark/traj.yaml",
+              "rollout": 0
+            },
+            {
+              "instance_id": "astropy__astropy-12907",
+              "image": "gcr.io/test/astropy:latest",
+              "trajectory": "benchmark/traj.yaml",
+              "rollout": 1
+            }
+          ],
+          "prefetch_images": ["gcr.io/test/django:latest"]
+        }
+      ]
+    }
+  ]
+}

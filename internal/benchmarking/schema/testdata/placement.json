@@ -1,0 +1,27 @@
+{
+  "schema_version": "v1",
+  "scenario_name": "swebench-multi-step",
+  "jobs": [
+    {
+      "job": "sim-loop-1",
+      "assignments": [
+        {
+          "step": 1,
+          "instance_id": "astropy__astropy-12907",
+          "rollout": 0,
+          "env_id": "env-0",
+          "from_snapshot": "snap-golden-1",
+          "retire_after": false
+        },
+        {
+          "step": 2,
+          "instance_id": "astropy__astropy-12907",
+          "rollout": 0,
+          "env_id": "env-0",
+          "reuse_env_id": "env-0",
+          "retire_after": true
+        }
+      ]
+    }
+  ]
+}

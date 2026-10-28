@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-on-gke.github.io/sandboxenv-rl/schema/v1/schedule.schema.json",
+  "title": "Schedule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenario_name", "jobs"],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["v1"] },
+    "scenario_name": { "type": "string", "minLength": 1 },
+    "seed": { "type": "integer" },
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/ScheduledJob" }
+    }
+  },
+  "$defs": {
+    "ScheduledJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job", "steps"],
+      "properties": {
+        "job": { "type": "string", "minLength": 1 },
+        "start_offset_ms": { "type": "number", "minimum": 0 },
+        "park_policy": {
+          "type": "string",
+          "enum": ["suspend-async", "suspend-sync", "suspend", "fork", "delete", "none"]
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ScheduledStep" }
+        }
+      }
+    },
+    "ScheduledStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "tasks"],
+      "properties": {
+        "step": { "type": "integer", "minimum": 1 },
+        "step_pause_ms": { "type": "number", "minimum": 0 },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ScheduledTask" }
+        },
+        "prefetch_images": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "ScheduledTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "image"],
+      "properties": {
+        "instance_id": { "type": "string", "minLength": 1 },
+        "image": { "type": "string", "minLength": 1 },
+        "trajectory": { "type": "string" },
+        "rollout": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

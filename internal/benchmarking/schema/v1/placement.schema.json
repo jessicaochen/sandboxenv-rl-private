@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-on-gke.github.io/sandboxenv-rl/schema/v1/placement.schema.json",
+  "title": "PlacementPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenario_name", "jobs"],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["v1"] },
+    "scenario_name": { "type": "string", "minLength": 1 },
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/JobPlacementPlan" }
+    }
+  },
+  "$defs": {
+    "JobPlacementPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job", "assignments"],
+      "properties": {
+        "job": { "type": "string", "minLength": 1 },
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TaskPlacement" }
+        }
+      }
+    },
+    "TaskPlacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "instance_id", "env_id"],
+      "properties": {
+        "step": { "type": "integer", "minimum": 1 },
+        "instance_id": { "type": "string", "minLength": 1 },
+        "rollout": { "type": "integer", "minimum": 0 },
+        "env_id": { "type": "string", "minLength": 1 },
+        "reuse_env_id": { "type": "string" },
+        "from_snapshot": { "type": "string" },
+        "retire_after": { "type": "boolean" }
+      }
+    }
+  }
+}

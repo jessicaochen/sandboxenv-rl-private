@@ -66,6 +66,16 @@ type StepStat struct {
 	ParkMS    float64 `json:"park_ms"`
 	WakeP50MS float64 `json:"wake_p50_ms"`
 	WakeP95MS float64 `json:"wake_p95_ms"`
+
+	WorkingSetHits       int     `json:"working_set_hits,omitempty"`
+	WorkingSetMisses     int     `json:"working_set_misses,omitempty"`
+	WorkingSetHitRate    float64 `json:"working_set_hit_rate,omitempty"`
+	StandingPoolSize     int     `json:"standing_pool_size,omitempty"`
+	Created              int     `json:"created,omitempty"`
+	Reused               int     `json:"reused,omitempty"`
+	Retired              int     `json:"retired,omitempty"`
+	PrefetchLeadMarginMS float64 `json:"prefetch_lead_margin_ms,omitempty"`
+	ReleaseOverlapMS     float64 `json:"release_overlap_ms,omitempty"`
 }
 
 // Report is the summary of one run's JSONL, stable enough to diff between
@@ -85,6 +95,16 @@ type Report struct {
 	RewardRate float64    `json:"reward_rate"`
 	Stats      []Stat     `json:"stats"`
 	Steps      []StepStat `json:"steps,omitempty"`
+
+	WorkingSetHits       int     `json:"working_set_hits,omitempty"`
+	WorkingSetMisses     int     `json:"working_set_misses,omitempty"`
+	WorkingSetHitRate    float64 `json:"working_set_hit_rate,omitempty"`
+	StandingPoolSize     int     `json:"standing_pool_size,omitempty"`
+	Created              int     `json:"created,omitempty"`
+	Reused               int     `json:"reused,omitempty"`
+	Retired              int     `json:"retired,omitempty"`
+	PrefetchLeadMarginMS float64 `json:"prefetch_lead_margin_ms,omitempty"`
+	ReleaseOverlapMS     float64 `json:"release_overlap_ms,omitempty"`
 	// Errors counts distinct error strings, most frequent first.
 	Errors []ErrorCount `json:"errors,omitempty"`
 	// Unresolved lists the instances whose reward was 0, once each.
@@ -217,6 +237,15 @@ func (b *Builder) Add(e Event) {
 		}
 		b.runs = append(b.runs, e.DurMS)
 		b.labels.add(e.Labels)
+		b.rep.WorkingSetHits = e.WorkingSetHits
+		b.rep.WorkingSetMisses = e.WorkingSetMisses
+		b.rep.WorkingSetHitRate = e.WorkingSetHitRate
+		b.rep.StandingPoolSize = e.StandingPoolSize
+		b.rep.Created = e.Created
+		b.rep.Reused = e.Reused
+		b.rep.Retired = e.Retired
+		b.rep.PrefetchLeadMarginMS = e.PrefetchLeadMarginMS
+		b.rep.ReleaseOverlapMS = e.ReleaseOverlapMS
 	case EventTask:
 		b.rep.Tasks++
 		if !e.OK {
@@ -236,12 +265,27 @@ func (b *Builder) Add(e Event) {
 			}
 		}
 	case EventBarrier:
-		stepStat(b.steps, e.Step)
+		st := stepStat(b.steps, e.Step)
 		b.barriers[e.Step] = append(b.barriers[e.Step], e.DurMS)
 		b.lives[e.Step] = append(b.lives[e.Step], float64(e.Count))
+		st.WorkingSetHits = e.WorkingSetHits
+		st.WorkingSetMisses = e.WorkingSetMisses
+		st.WorkingSetHitRate = e.WorkingSetHitRate
+		st.StandingPoolSize = e.StandingPoolSize
+		st.Created = e.Created
+		st.Reused = e.Reused
+		st.Retired = e.Retired
+		st.PrefetchLeadMarginMS = e.PrefetchLeadMarginMS
+		st.ReleaseOverlapMS = e.ReleaseOverlapMS
 	case EventPark:
-		stepStat(b.steps, e.Step)
+		st := stepStat(b.steps, e.Step)
 		b.parks[e.Step] = append(b.parks[e.Step], e.DurMS)
+		if e.StandingPoolSize > 0 {
+			st.StandingPoolSize = e.StandingPoolSize
+		}
+		if e.ReleaseOverlapMS > 0 {
+			st.ReleaseOverlapMS = e.ReleaseOverlapMS
+		}
 	case EventWake:
 		if e.OK {
 			b.wakes[e.Step] = append(b.wakes[e.Step], e.DurMS)
