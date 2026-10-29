@@ -17,7 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from uni_agent_substrate.datasets import image_of, instance_id, r2e_row, set_image
+from uni_agent_substrate.datasets import (
+    image_of,
+    instance_id,
+    r2e_row,
+    select_rows,
+    set_image,
+)
 
 EXAMPLE = {
     "repo_name": "numpy",
@@ -45,3 +51,13 @@ def test_r2e_row_shape_and_derived_instance_id():
 def test_r2e_row_requires_expected_output():
     with pytest.raises(ValueError):
         r2e_row({**EXAMPLE, "expected_output_json": ""}, "d")
+
+
+def test_select_rows_sorted_head_and_seeded_shuffle():
+    rows = [r2e_row({**EXAMPLE, "repo_name": repo, "commit_hash": str(i)}, "d") for i, repo in enumerate(["b"] * 5 + ["a"] * 5)]
+    head = select_rows(rows, 3, None)
+    assert [instance_id(r) for r in head] == ["a-5", "a-6", "a-7"]
+    first = [instance_id(r) for r in select_rows(rows, 4, 0)]
+    assert first == [instance_id(r) for r in select_rows(list(reversed(rows)), 4, 0)]  # input order does not matter
+    assert first != [instance_id(r) for r in select_rows(rows, 4, 1)]
+    assert len(select_rows(rows, None, 0)) == 10

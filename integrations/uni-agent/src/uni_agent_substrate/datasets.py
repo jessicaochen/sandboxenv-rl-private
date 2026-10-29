@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -123,12 +124,21 @@ def set_image(row: dict[str, Any], ref: str) -> None:
     row["extra_info"]["tools_kwargs"]["task"]["sandbox"]["image"] = ref
 
 
+def select_rows(rows: list[dict[str, Any]], max_instances: int | None, shuffle_seed: int | None) -> list[dict[str, Any]]:
+    """Deterministic slice: sort by instance id, optionally shuffle with a seed, then take the head."""
+    rows = sorted(rows, key=instance_id)
+    if shuffle_seed is not None:
+        random.Random(shuffle_seed).shuffle(rows)
+    return rows if max_instances is None else rows[:max_instances]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", required=True, choices=["r2e_gym_easy", "r2e_gym", "swe_rebench", "swe_bench"])
-    ap.add_argument("--dataset", help="HF dataset id (r2e_gym source; default R2E-Gym/R2E-Gym-Subset)")
+    ap.add_argument("--dataset", help="HF dataset id for --source r2e_gym (default R2E-Gym/R2E-Gym-Subset; R2E-Gym/R2E-Gym-V1 is the full set)")
     ap.add_argument("--split", default="train", help="split (r2e_gym_easy: train|val; r2e_gym: HF split)")
-    ap.add_argument("--max-instances", type=int, help="keep the first N instances by sorted instance id")
+    ap.add_argument("--max-instances", type=int, help="keep the first N instances (by sorted instance id, or after --shuffle-seed)")
+    ap.add_argument("--shuffle-seed", type=int, help="shuffle deterministically before slicing (datasets sorted by repo need this)")
     ap.add_argument("--exclude-file", help="file of instance ids to drop (first token per line, # comments)")
     ap.add_argument("--images-out", help="write the slice's image references (one per line)")
     ap.add_argument("--image-digests", help="JSON {tag ref: digest ref}; rewrite images in the output")
@@ -151,9 +161,7 @@ def main() -> int:
                 excluded.add(tok[0])
         rows = [r for r in rows if instance_id(r) not in excluded]
 
-    rows.sort(key=instance_id)
-    if args.max_instances is not None:
-        rows = rows[: args.max_instances]
+    rows = select_rows(rows, args.max_instances, args.shuffle_seed)
 
     images = sorted({image_of(r) for r in rows})
     if args.images_out:

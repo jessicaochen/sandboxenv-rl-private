@@ -1,0 +1,128 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# NNODES_TRAIN + NNODES_ROLLOUT whole GPU nodes: a Ray head pod (runs the verl driver, the uni-agent
+# gateways and task runners) plus an indexed Job of Ray worker pods. Required pod anti-affinity keeps
+# every pod on its own host; verl's trainer pool spans NNODES_TRAIN nodes and its rollout pool
+# NNODES_ROLLOUT nodes, so the Megatron trainer and the vLLM replicas never share a machine.
+# All training knobs come from the profile ConfigMap (profiles/<PROFILE>.env, see deploy.sh).
+# deploy.sh fills the placeholders: GPU node selector (GPU_POOL), extra tolerations (GPU_TOLERATIONS), extra pod env
+# (GPU_POD_ENV: NCCL/Gloo settings for the network), worker replicas (NNODES_TRAIN + NNODES_ROLLOUT - 1), memory and
+# ephemeral requests (profile), and the per-instance names and environment id prefix (JOB_SUFFIX).
+apiVersion: v1
+kind: Service
+metadata: {name: __HEAD_SVC__, namespace: default}
+spec:
+  clusterIP: None
+  selector: {app: __JOB__, role: head}
+  ports:
+  - {name: gcs, port: 6379}
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: __JOB__, namespace: default}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata: {labels: {app: __JOB__, role: head}}
+    spec:
+      restartPolicy: Never
+      nodeSelector: {__GPU_NODE_SELECTOR__}
+      tolerations:
+      - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      __GPU_EXTRA_TOLERATIONS__
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector: {matchLabels: {app: __JOB__}}
+      containers:
+      - name: head
+        image: verlai/verl:vllm024.dev2
+        command: ["/bin/bash", "-c", "bash /workspace/cfg/run_fully_async.sh"]
+        ports: [{containerPort: 6379}]
+        envFrom:
+        - configMapRef: {name: __JOB__-profile}     # MODEL_ID, node counts, parallelism, batch, lengths, ...
+        env:
+        - {name: ROLE, value: "head"}
+        - {name: NODE_WAIT_S, value: "3600"}
+        - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: hf-token, key: token, optional: true}}}
+        - {name: ATE_ENV_ENDPOINT, value: "ate-env-api.ate-env.svc:7777"}
+        - {name: ACTOR_PREFIX, value: "__ACTOR_PREFIX__"}     # environment id prefix: purge and probes stay scoped to this instance
+        __GPU_EXTRA_ENV__
+        resources:
+          requests: {cpu: "64", memory: "__MEM_REQUEST__", nvidia.com/gpu: 8, ephemeral-storage: "__EPH_REQUEST__"}
+          limits:   {nvidia.com/gpu: 8}   # no memory limit: offloaded params/optimizer and the Decoupled-PPO CPU weight copies use most of the host
+        volumeMounts:
+        - {name: cfg, mountPath: /workspace/cfg}
+        - {name: work, mountPath: /workspace}
+        - {name: dshm, mountPath: /dev/shm}
+      volumes:
+      - name: cfg
+        configMap: {name: __JOB__, defaultMode: 0755}
+      - name: work
+        emptyDir: {}
+      - name: dshm
+        emptyDir: {medium: Memory, sizeLimit: 256Gi}
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: __JOB__-worker, namespace: default}
+spec:
+  backoffLimit: 0
+  completionMode: Indexed
+  completions: __WORKER_REPLICAS__
+  parallelism: __WORKER_REPLICAS__
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata: {labels: {app: __JOB__, role: worker}}
+    spec:
+      restartPolicy: Never
+      nodeSelector: {__GPU_NODE_SELECTOR__}
+      tolerations:
+      - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      __GPU_EXTRA_TOLERATIONS__
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector: {matchLabels: {app: __JOB__}}
+      containers:
+      - name: worker
+        image: verlai/verl:vllm024.dev2
+        command: ["/bin/bash", "-c", "bash /workspace/cfg/run_fully_async.sh"]
+        envFrom:
+        - configMapRef: {name: __JOB__-profile}
+        env:
+        - {name: ROLE, value: "worker"}
+        - {name: RAY_HEAD_HOST, value: "__HEAD_SVC__.default.svc"}
+        - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: hf-token, key: token, optional: true}}}
+        - {name: ATE_ENV_ENDPOINT, value: "ate-env-api.ate-env.svc:7777"}
+        - {name: ACTOR_PREFIX, value: "__ACTOR_PREFIX__"}     # environment id prefix: purge and probes stay scoped to this instance
+        __GPU_EXTRA_ENV__
+        resources:
+          requests: {cpu: "64", memory: "__MEM_REQUEST__", nvidia.com/gpu: 8, ephemeral-storage: "__EPH_REQUEST__"}
+          limits:   {nvidia.com/gpu: 8}   # no memory limit: offloaded params/optimizer and the Decoupled-PPO CPU weight copies use most of the host
+        volumeMounts:
+        - {name: cfg, mountPath: /workspace/cfg}
+        - {name: work, mountPath: /workspace}
+        - {name: dshm, mountPath: /dev/shm}
+      volumes:
+      - name: cfg
+        configMap: {name: __JOB__, defaultMode: 0755}
+      - name: work
+        emptyDir: {}
+      - name: dshm
+        emptyDir: {medium: Memory, sizeLimit: 256Gi}

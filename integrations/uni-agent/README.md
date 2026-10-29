@@ -41,8 +41,13 @@ The row's `sandbox.image` must be digest-pinned or present in `image_digests`
 (Substrate rejects tags). Commands run through `Env.start_process` with output
 collected in `stream_window_s` windows (default 240 s) so long test runs survive the
 router's stream timeout; `open_shell` keeps `cd` and exports across commands without
-tmux. Environments have no egress. Tune `SANDBOX_STARTUP_CONCURRENCY` (uni-agent) to
-the ate-env-api capacity (32 is a safe start).
+tmux. Environments have no egress. Inside Ray, one detached actor per job,
+`<actor_prefix>-sandbox-coordinator`, gates environment start-ups job-wide at
+`SANDBOX_STARTUP_CONCURRENCY` (also `startup_concurrency` in `sandbox_kwargs`; uni-agent's own
+semaphore is per process) and tracks every environment id with a lease the owner renews: ids whose
+owner never got ready, died, or could not delete them are deleted by its sweep, so no orphan keeps a
+booking. `start_wait_s` bounds how long a session waits for the pool (full pool: recreate; slow wake:
+same environment); `stop_retry_s` (120) retries deletes while the actor is mid-operation.
 
 ## Task `r2e_gym`
 
@@ -60,7 +65,8 @@ python3 -m uni_agent_substrate.datasets --source r2e_gym_easy --max-instances 64
 ```
 
 `datasets` (`--source r2e_gym_easy | r2e_gym | swe_rebench | swe_bench`, `--dataset`
-to override the Hugging Face id, `--split`, `--max-instances`, `--exclude-file`) emits
+to override the Hugging Face id, e.g. `R2E-Gym/R2E-Gym-V1`, `--split`, `--max-instances`,
+`--shuffle-seed` for datasets sorted by repository, `--exclude-file`) emits
 one row shape for every source: `prompt`, `task_name`, `sandbox.image` and the
 instance metadata the task needs. Substrate only accepts digest-pinned images, so
 `resolve_images.sh` resolves the tag references (`--images-out`) through an Artifact
