@@ -971,12 +971,6 @@ func (r *runner) runScheduledSteps(ctx context.Context) error {
 				return
 			}
 
-			if parkPolicy == schema.ParkSuspendAsync && sIdx+1 < len(job.Steps) {
-				pStart := time.Now()
-				_ = ws.Release(ctx, entry)
-				r.rec.Record(r.event(EventSuspend, e, stepNum, time.Since(pStart), nil))
-				return
-			}
 			active[i] = entry
 		})
 
@@ -985,7 +979,13 @@ func (r *runner) runScheduledSteps(ctx context.Context) error {
 		var stepOverlapMS float64
 
 		if sIdx+1 < len(job.Steps) && ctx.Err() == nil {
-			if parkPolicy != schema.ParkSuspendAsync && parkPolicy != schema.ParkNone {
+			if parkPolicy == schema.ParkSuspendAsync {
+				for _, entry := range active {
+					if entry != nil {
+						_ = ws.Release(ctx, entry)
+					}
+				}
+			} else if parkPolicy != schema.ParkNone {
 				parkStart := time.Now()
 				forEach(ctx, len(active), r.cfg.Width, func(i int) {
 					entry := active[i]
@@ -1031,6 +1031,13 @@ func (r *runner) runScheduledSteps(ctx context.Context) error {
 			if parkPolicy == schema.ParkSuspendAsync {
 				parkStart := time.Now()
 				overlap, _ := ws.AwaitAsyncSuspends(ctx, barrierDoneAt, time.Now())
+				for i, entry := range active {
+					if entry == nil {
+						continue
+					}
+					e := &environment{id: entry.SandboxID, base: entry.BaseID, inst: Instance{InstanceID: entry.InstanceID, Image: entry.Image}, task: i}
+					r.rec.Record(r.event(EventSuspend, e, stepNum, entry.asyncDur, entry.asyncErr))
+				}
 				stepOverlapMS = overlap
 				totalReleaseOverlapMS += overlap
 				stStats := ws.StepStats(leadMS, stepOverlapMS)
